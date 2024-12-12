@@ -151,25 +151,42 @@ class MovableOverlayState extends State<MovableOverlay>
     final adjustedYVelocity = adjustedVelocity.dy;
 
     void updateOffset() {
-      double x = 0.0;
-      double y = 0.0;
+      double x = _dragOffset.dx;
+      double y = _dragOffset.dy;
       if (adjustedXVelocity.abs() > adjustedYVelocity.abs()) {
-        final xSimulation = FrictionSimulation(0.5, _dragOffset.dx, adjustedXVelocity);
-        x = clamp(
-          xSimulation.x(_dragAnimationController.value),
-          _offsets[PIPViewCorner.topLeft]?.dx ?? 0.0,
-          _offsets[PIPViewCorner.topRight]?.dx ?? 0.0,
+        final xSpring = SpringSimulation(
+          const SpringDescription(
+            mass: 1.0,
+            stiffness: 400.0, // Higher value = tighter spring
+            damping: 100.0, // Lower value = more bounce
+          ),
+          _dragOffset.dx,
+          clamp(
+            _dragOffset.dx + adjustedXVelocity / 20,
+            _offsets[PIPViewCorner.topLeft]?.dx ?? 0.0,
+            _offsets[PIPViewCorner.topRight]?.dx ?? 0.0,
+          ),
+          adjustedXVelocity,
         );
-        y = _dragOffset.dy;
+        x = xSpring.x(_dragAnimationController.value);
       } else {
-        final ySimulation = FrictionSimulation(0.5, _dragOffset.dy, adjustedYVelocity);
-        x = _dragOffset.dx;
-        y = clamp(
-          ySimulation.x(_dragAnimationController.value),
-          _offsets[PIPViewCorner.topLeft]?.dy ?? 0.0,
-          _offsets[PIPViewCorner.bottomLeft]?.dy ?? 0.0,
+        final ySpring = SpringSimulation(
+          const SpringDescription(
+            mass: 1,
+            stiffness: 400.0,
+            damping: 100.0,
+          ),
+          _dragOffset.dy,
+          clamp(
+            _dragOffset.dy + adjustedYVelocity / 20,
+            _offsets[PIPViewCorner.topLeft]?.dy ?? 0.0,
+            _offsets[PIPViewCorner.bottomLeft]?.dy ?? 0.0,
+          ),
+          adjustedYVelocity,
         );
+        y = ySpring.x(_dragAnimationController.value);
       }
+
       if (_dragOffset.dx != x || _dragOffset.dy != y) {
         setState(() {
           _dragOffset = Offset(x, y);
