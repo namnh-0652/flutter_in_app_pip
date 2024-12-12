@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 import 'package:flutter_in_app_pip/pip_params.dart';
+import 'package:flutter_in_app_pip/pip_utils.dart';
 import 'package:flutter_in_app_pip/pip_view_corner.dart';
 
 class MovableOverlay extends StatefulWidget {
@@ -35,9 +37,10 @@ class MovableOverlayState extends State<MovableOverlay>
   Offset _dragOffset = Offset.zero;
   var _isDragging = false;
   var _isFloating = false;
+  var _isZooming = false;
   Widget? _bottomWidgetGhost;
   Map<PIPViewCorner, Offset> _offsets = {};
-  final defaultAnimationDuration = const Duration(milliseconds: 200);
+  final defaultAnimationDuration = const Duration(milliseconds: 250);
   Widget? bottomChild;
 
   double _scaleFactor = 1.0;
@@ -57,6 +60,13 @@ class MovableOverlayState extends State<MovableOverlay>
       vsync: this,
     );
     bottomChild = widget.bottomWidget;
+  }
+
+  @override
+  void dispose() {
+    _toggleFloatingAnimationController.dispose();
+    _dragAnimationController.dispose();
+    super.dispose();
   }
 
   @override
@@ -110,19 +120,12 @@ class MovableOverlayState extends State<MovableOverlay>
 
   void _onPanEnd(ScaleEndDetails details) {
     if (!_isDragging) return;
-
-    final nearestCorner = _calculateNearestCorner(
-      offset: _dragOffset,
-      offsets: _offsets,
-    );
-    setState(() {
-      _corner = nearestCorner;
-      _isDragging = false;
-    });
-    _dragAnimationController.forward().whenCompleteOrCancel(() {
-      _dragAnimationController.value = 0;
-      _dragOffset = Offset.zero;
-    });
+    if (_isZooming) {
+      _handleZoomingEnd();
+    } else {
+      if (_offsets.isEmpty) return;
+      _handleDraggingEnd(details);
+    }
   }
 
   void _onPanStart(ScaleStartDetails details) {
@@ -130,6 +133,78 @@ class MovableOverlayState extends State<MovableOverlay>
     setState(() {
       _dragOffset = _offsets[_corner]!;
       _isDragging = true;
+      _isZooming = details.pointerCount == 2;
+    });
+  }
+
+  void _handleZoomingEnd() {
+    _snapToNearestCorner();
+    _dragAnimationController.forward().whenCompleteOrCancel(() {
+      _dragAnimationController.value = 0;
+      _resetDraggingState();
+    });
+  }
+
+  void _handleDraggingEnd(ScaleEndDetails details) {
+    final adjustedVelocity = details.velocity.pixelsPerSecond;
+    final adjustedXVelocity = adjustedVelocity.dx;
+    final adjustedYVelocity = adjustedVelocity.dy;
+
+    void updateOffset() {
+      double x = 0.0;
+      double y = 0.0;
+      if (adjustedXVelocity.abs() > adjustedYVelocity.abs()) {
+        final xSimulation = FrictionSimulation(0.5, _dragOffset.dx, adjustedXVelocity);
+        x = clamp(
+          xSimulation.x(_dragAnimationController.value),
+          _offsets[PIPViewCorner.topLeft]?.dx ?? 0.0,
+          _offsets[PIPViewCorner.topRight]?.dx ?? 0.0,
+        );
+        y = _dragOffset.dy;
+      } else {
+        final ySimulation = FrictionSimulation(0.5, _dragOffset.dy, adjustedYVelocity);
+        x = _dragOffset.dx;
+        y = clamp(
+          ySimulation.x(_dragAnimationController.value),
+          _offsets[PIPViewCorner.topLeft]?.dy ?? 0.0,
+          _offsets[PIPViewCorner.bottomLeft]?.dy ?? 0.0,
+        );
+      }
+      if (_dragOffset.dx != x || _dragOffset.dy != y) {
+        setState(() {
+          _dragOffset = Offset(x, y);
+        });
+      }
+
+      if (_dragAnimationController.isCompleted) {
+        _snapToNearestCorner();
+      }
+    }
+
+    _dragAnimationController
+      ..addListener(updateOffset)
+      ..forward(from: 0.0).whenCompleteOrCancel(() {
+        _resetDraggingState();
+        _dragAnimationController.removeListener(updateOffset);
+      });
+  }
+
+  void _snapToNearestCorner() {
+    final nearestCorner = _calculateNearestCorner(
+      offset: _dragOffset,
+      offsets: _offsets,
+    );
+    setState(() {
+      _corner = nearestCorner;
+      _dragOffset = _offsets[_corner]!;
+    });
+  }
+
+  void _resetDraggingState() {
+    setState(() {
+      _dragOffset = Offset.zero;
+      _isDragging = false;
+      _isZooming = false;
     });
   }
 
@@ -144,19 +219,17 @@ class MovableOverlayState extends State<MovableOverlay>
     return LayoutBuilder(
       builder: (context, constraints) {
         final bottomWidget = bottomChild ?? _bottomWidgetGhost;
-        final width = constraints.maxWidth;
-        final height = constraints.maxHeight;
-        double? floatingWidth;
-        floatingWidth = widget.topWidget != null
-            ? widget.pipParams.pipWindowWidth * _scaleFactor
-            : 0;
-        double? floatingHeight;
-        floatingHeight = widget.topWidget != null
-            ? widget.pipParams.pipWindowHeight * _scaleFactor
-            : 0;
+        
+        double floatingWidth = 0;
+        double floatingHeight = 0;
+
+        if (widget.topWidget != null) {
+          floatingWidth = widget.pipParams.pipWindowWidth * _scaleFactor;
+          floatingHeight = widget.pipParams.pipWindowHeight * _scaleFactor;
+        }
 
         final floatingWidgetSize = Size(floatingWidth, floatingHeight);
-        final fullWidgetSize = Size(width, height);
+        final fullWidgetSize = Size(constraints.maxWidth, constraints.maxHeight);
 
         _updateCornersOffsets(
           spaceSize: fullWidgetSize,
@@ -188,21 +261,19 @@ class MovableOverlayState extends State<MovableOverlay>
 
                   final floatingOffset = _isDragging
                       ? _dragOffset
-                      : Tween<Offset>(
-                          begin: _dragOffset,
-                          end: calculatedOffset,
-                        ).transform(_dragAnimationController.isAnimating
-                          ? dragAnimationValue
-                          : toggleFloatingAnimationValue);
-                  final width = Tween<double>(
-                    begin: fullWidgetSize.width,
-                    end: floatingWidgetSize.width,
-                  ).transform(toggleFloatingAnimationValue);
-                  final height = Tween<double>(
-                    begin: fullWidgetSize.height,
-                    end: floatingWidgetSize.height,
-                  ).transform(toggleFloatingAnimationValue);
-
+                      : Offset.lerp(
+                          _dragOffset,
+                          calculatedOffset,
+                          _dragAnimationController.isAnimating
+                              ? dragAnimationValue
+                              : toggleFloatingAnimationValue,
+                        )!;
+                  final width = fullWidgetSize.width +
+                      (floatingWidgetSize.width - fullWidgetSize.width) *
+                          toggleFloatingAnimationValue;
+                  final height = fullWidgetSize.height +
+                      (floatingWidgetSize.height - fullWidgetSize.height) *
+                          toggleFloatingAnimationValue;
                   return Positioned(
                     left: floatingOffset.dx,
                     top: floatingOffset.dy,

@@ -6,21 +6,34 @@ class InAppPip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AspectRatio(
-      aspectRatio: 16 / 9,
-      child: ColoredBox(
-        color: Colors.amber,
-        child: Align(
-          alignment: Alignment.topLeft,
-          child: IconButton(
-            icon: const Icon(
-              Icons.close,
-              size: 24,
-              color: Colors.white,
+    return Material(
+      color: Colors.transparent,
+      child: Stack(
+        children: [
+          const AspectRatio(
+            aspectRatio: 16 / 9,
+            child: ColoredBox(
+              color: Colors.amber,
             ),
-            onPressed: () => PictureInPicture.stopPiP(),
           ),
-        ),
+          ColoredBox(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => PictureInPicture.stopPiP(),
+            ),
+          ),
+          Align(
+            alignment: Alignment.topLeft,
+            child: IconButton(
+              icon: const Icon(
+                Icons.close,
+                size: 24,
+                color: Colors.white,
+              ),
+              onPressed: () => PictureInPicture.stopPiP(),
+            ),
+          ),
+        ],
       ),
     );
   }

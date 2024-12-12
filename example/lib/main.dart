@@ -32,6 +32,7 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   @override
   Widget build(BuildContext context) {
+    double maxPipWidth = MediaQuery.of(context).size.width - 20;
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
@@ -46,7 +47,14 @@ class _MyHomePageState extends State<MyHomePage> {
       floatingActionButton: FloatingActionButton(
         onPressed: () {
           PictureInPicture.updatePiPParams(
-            pipParams: const PiPParams(bottomSpace: 80, pipWindowWidth: 224, pipWindowHeight: 126),
+            pipParams: PiPParams(
+              bottomSpace: 80,
+              pipWindowWidth: 224,
+              pipWindowHeight: 126,
+              resizable: true,
+              minSize: const Size(224, 126),
+              maxSize: Size(maxPipWidth, maxPipWidth * 9 / 16),
+            ),
           );
           PictureInPicture.startPiP(pipWidget: const InAppPip());
         },
