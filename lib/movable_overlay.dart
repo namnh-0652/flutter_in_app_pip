@@ -47,6 +47,11 @@ class MovableOverlayState extends State<MovableOverlay>
 
   double _baseScaleFactor = 1.0;
 
+  double get minX => _offsets[PIPViewCorner.topLeft]?.dx ?? 0;
+  double get maxX => _offsets[PIPViewCorner.topRight]?.dx ?? 0;
+  double get minY => _offsets[PIPViewCorner.topLeft]?.dy ?? 0;
+  double get maxY => _offsets[PIPViewCorner.bottomLeft]?.dy ?? 0;
+
   @override
   void initState() {
     super.initState();
@@ -73,7 +78,7 @@ class MovableOverlayState extends State<MovableOverlay>
   void didUpdateWidget(covariant MovableOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (_isFloating) {
-      _scaleFactor = 1;
+      // _scaleFactor = 1; // uncomment if want to re-set last scale
       if (widget.topWidget == null || bottomChild == null) {
         _isFloating = false;
         _bottomWidgetGhost = oldWidget.bottomWidget;
@@ -151,8 +156,9 @@ class MovableOverlayState extends State<MovableOverlay>
     final adjustedYVelocity = adjustedVelocity.dy;
 
     void updateOffset() {
-      double x = _dragOffset.dx;
-      double y = _dragOffset.dy;
+      double x = clamp(_dragOffset.dx, minX, maxX);
+      double y = clamp(_dragOffset.dy, minY, maxY);
+      
       if (adjustedXVelocity.abs() > adjustedYVelocity.abs()) {
         final xSpring = SpringSimulation(
           const SpringDescription(
@@ -161,11 +167,7 @@ class MovableOverlayState extends State<MovableOverlay>
             damping: 100.0, // Lower value = more bounce
           ),
           _dragOffset.dx,
-          clamp(
-            _dragOffset.dx + adjustedXVelocity / 20,
-            _offsets[PIPViewCorner.topLeft]?.dx ?? 0.0,
-            _offsets[PIPViewCorner.topRight]?.dx ?? 0.0,
-          ),
+          clamp(_dragOffset.dx + adjustedXVelocity / 20, minX, maxX),
           adjustedXVelocity,
         );
         x = xSpring.x(_dragAnimationController.value);
@@ -177,19 +179,21 @@ class MovableOverlayState extends State<MovableOverlay>
             damping: 100.0,
           ),
           _dragOffset.dy,
-          clamp(
-            _dragOffset.dy + adjustedYVelocity / 20,
-            _offsets[PIPViewCorner.topLeft]?.dy ?? 0.0,
-            _offsets[PIPViewCorner.bottomLeft]?.dy ?? 0.0,
-          ),
+          clamp(_dragOffset.dy + adjustedYVelocity / 20, minY, maxY),
           adjustedYVelocity,
         );
         y = ySpring.x(_dragAnimationController.value);
       }
 
       if (_dragOffset.dx != x || _dragOffset.dy != y) {
+        final nearestCorner = _calculateNearestCorner(offset: _dragOffset, offsets: _offsets);
         setState(() {
-          _dragOffset = Offset(x, y);
+          _isDragging = false;
+          if (_corner != nearestCorner) {
+            _corner = nearestCorner;
+          } else {
+            _dragOffset = Offset(x, y);
+          }
         });
       }
 
@@ -211,6 +215,7 @@ class MovableOverlayState extends State<MovableOverlay>
       offset: _dragOffset,
       offsets: _offsets,
     );
+    if (_corner == nearestCorner) return;
     setState(() {
       _corner = nearestCorner;
       _dragOffset = _offsets[_corner]!;
