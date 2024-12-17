@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 import 'package:flutter_in_app_pip/pip_params.dart';
+import 'package:flutter_in_app_pip/pip_utils.dart';
 import 'package:flutter_in_app_pip/pip_view_corner.dart';
 
 class MovableOverlay extends StatefulWidget {
@@ -35,14 +37,20 @@ class MovableOverlayState extends State<MovableOverlay>
   Offset _dragOffset = Offset.zero;
   var _isDragging = false;
   var _isFloating = false;
+  var _isZooming = false;
   Widget? _bottomWidgetGhost;
   Map<PIPViewCorner, Offset> _offsets = {};
-  final defaultAnimationDuration = const Duration(milliseconds: 200);
+  final defaultAnimationDuration = const Duration(milliseconds: 250);
   Widget? bottomChild;
 
   double _scaleFactor = 1.0;
 
   double _baseScaleFactor = 1.0;
+
+  double get minX => _offsets[PIPViewCorner.topLeft]?.dx ?? 0;
+  double get maxX => _offsets[PIPViewCorner.topRight]?.dx ?? 0;
+  double get minY => _offsets[PIPViewCorner.topLeft]?.dy ?? 0;
+  double get maxY => _offsets[PIPViewCorner.bottomLeft]?.dy ?? 0;
 
   @override
   void initState() {
@@ -60,10 +68,17 @@ class MovableOverlayState extends State<MovableOverlay>
   }
 
   @override
+  void dispose() {
+    _toggleFloatingAnimationController.dispose();
+    _dragAnimationController.dispose();
+    super.dispose();
+  }
+
+  @override
   void didUpdateWidget(covariant MovableOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (_isFloating) {
-      _scaleFactor = 1;
+      // _scaleFactor = 1; // uncomment if want to re-set last scale
       if (widget.topWidget == null || bottomChild == null) {
         _isFloating = false;
         _bottomWidgetGhost = oldWidget.bottomWidget;
@@ -110,19 +125,12 @@ class MovableOverlayState extends State<MovableOverlay>
 
   void _onPanEnd(ScaleEndDetails details) {
     if (!_isDragging) return;
-
-    final nearestCorner = _calculateNearestCorner(
-      offset: _dragOffset,
-      offsets: _offsets,
-    );
-    setState(() {
-      _corner = nearestCorner;
-      _isDragging = false;
-    });
-    _dragAnimationController.forward().whenCompleteOrCancel(() {
-      _dragAnimationController.value = 0;
-      _dragOffset = Offset.zero;
-    });
+    if (_isZooming) {
+      _handleZoomingEnd();
+    } else {
+      if (_offsets.isEmpty) return;
+      _handleDraggingEnd(details);
+    }
   }
 
   void _onPanStart(ScaleStartDetails details) {
@@ -130,6 +138,95 @@ class MovableOverlayState extends State<MovableOverlay>
     setState(() {
       _dragOffset = _offsets[_corner]!;
       _isDragging = true;
+      _isZooming = details.pointerCount == 2;
+    });
+  }
+
+  void _handleZoomingEnd() {
+    _snapToNearestCorner();
+    _dragAnimationController.forward().whenCompleteOrCancel(() {
+      _dragAnimationController.value = 0;
+      _resetDraggingState();
+    });
+  }
+
+  void _handleDraggingEnd(ScaleEndDetails details) {
+    final adjustedVelocity = details.velocity.pixelsPerSecond;
+    final adjustedXVelocity = adjustedVelocity.dx;
+    final adjustedYVelocity = adjustedVelocity.dy;
+
+    void updateOffset() {
+      double x = clamp(_dragOffset.dx, minX, maxX);
+      double y = clamp(_dragOffset.dy, minY, maxY);
+      
+      if (adjustedXVelocity.abs() > adjustedYVelocity.abs()) {
+        final xSpring = SpringSimulation(
+          const SpringDescription(
+            mass: 1.0,
+            stiffness: 400.0, // Higher value = tighter spring
+            damping: 100.0, // Lower value = more bounce
+          ),
+          _dragOffset.dx,
+          clamp(_dragOffset.dx + adjustedXVelocity / 20, minX, maxX),
+          adjustedXVelocity,
+        );
+        x = xSpring.x(_dragAnimationController.value);
+      } else {
+        final ySpring = SpringSimulation(
+          const SpringDescription(
+            mass: 1,
+            stiffness: 400.0,
+            damping: 100.0,
+          ),
+          _dragOffset.dy,
+          clamp(_dragOffset.dy + adjustedYVelocity / 20, minY, maxY),
+          adjustedYVelocity,
+        );
+        y = ySpring.x(_dragAnimationController.value);
+      }
+
+      if (_dragOffset.dx != x || _dragOffset.dy != y) {
+        final nearestCorner = _calculateNearestCorner(offset: _dragOffset, offsets: _offsets);
+        setState(() {
+          _isDragging = false;
+          if (_corner != nearestCorner) {
+            _corner = nearestCorner;
+          } else {
+            _dragOffset = Offset(x, y);
+          }
+        });
+      }
+
+      if (_dragAnimationController.isCompleted) {
+        _snapToNearestCorner();
+      }
+    }
+
+    _dragAnimationController
+      ..addListener(updateOffset)
+      ..forward(from: 0.0).whenCompleteOrCancel(() {
+        _resetDraggingState();
+        _dragAnimationController.removeListener(updateOffset);
+      });
+  }
+
+  void _snapToNearestCorner() {
+    final nearestCorner = _calculateNearestCorner(
+      offset: _dragOffset,
+      offsets: _offsets,
+    );
+    if (_corner == nearestCorner) return;
+    setState(() {
+      _corner = nearestCorner;
+      _dragOffset = _offsets[_corner]!;
+    });
+  }
+
+  void _resetDraggingState() {
+    setState(() {
+      _dragOffset = Offset.zero;
+      _isDragging = false;
+      _isZooming = false;
     });
   }
 
@@ -144,19 +241,17 @@ class MovableOverlayState extends State<MovableOverlay>
     return LayoutBuilder(
       builder: (context, constraints) {
         final bottomWidget = bottomChild ?? _bottomWidgetGhost;
-        final width = constraints.maxWidth;
-        final height = constraints.maxHeight;
-        double? floatingWidth;
-        floatingWidth = widget.topWidget != null
-            ? widget.pipParams.pipWindowWidth * _scaleFactor
-            : 0;
-        double? floatingHeight;
-        floatingHeight = widget.topWidget != null
-            ? widget.pipParams.pipWindowHeight * _scaleFactor
-            : 0;
+        
+        double floatingWidth = 0;
+        double floatingHeight = 0;
+
+        if (widget.topWidget != null) {
+          floatingWidth = widget.pipParams.pipWindowWidth * _scaleFactor;
+          floatingHeight = widget.pipParams.pipWindowHeight * _scaleFactor;
+        }
 
         final floatingWidgetSize = Size(floatingWidth, floatingHeight);
-        final fullWidgetSize = Size(width, height);
+        final fullWidgetSize = Size(constraints.maxWidth, constraints.maxHeight);
 
         _updateCornersOffsets(
           spaceSize: fullWidgetSize,
@@ -188,21 +283,19 @@ class MovableOverlayState extends State<MovableOverlay>
 
                   final floatingOffset = _isDragging
                       ? _dragOffset
-                      : Tween<Offset>(
-                          begin: _dragOffset,
-                          end: calculatedOffset,
-                        ).transform(_dragAnimationController.isAnimating
-                          ? dragAnimationValue
-                          : toggleFloatingAnimationValue);
-                  final width = Tween<double>(
-                    begin: fullWidgetSize.width,
-                    end: floatingWidgetSize.width,
-                  ).transform(toggleFloatingAnimationValue);
-                  final height = Tween<double>(
-                    begin: fullWidgetSize.height,
-                    end: floatingWidgetSize.height,
-                  ).transform(toggleFloatingAnimationValue);
-
+                      : Offset.lerp(
+                          _dragOffset,
+                          calculatedOffset,
+                          _dragAnimationController.isAnimating
+                              ? dragAnimationValue
+                              : toggleFloatingAnimationValue,
+                        )!;
+                  final width = fullWidgetSize.width +
+                      (floatingWidgetSize.width - fullWidgetSize.width) *
+                          toggleFloatingAnimationValue;
+                  final height = fullWidgetSize.height +
+                      (floatingWidgetSize.height - fullWidgetSize.height) *
+                          toggleFloatingAnimationValue;
                   return Positioned(
                     left: floatingOffset.dx,
                     top: floatingOffset.dy,
