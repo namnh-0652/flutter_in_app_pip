@@ -155,9 +155,8 @@ class MovableOverlayState extends State<MovableOverlay>
     final adjustedXVelocity = adjustedVelocity.dx;
     final adjustedYVelocity = adjustedVelocity.dy;
 
-    final isFastSwipe = adjustedVelocity.distance > 800.0;
-
     void updateOffset() {
+      final isFastSwipe = adjustedVelocity.distance > 800.0;
       double x = clamp(_dragOffset.dx, minX, maxX);
       double y = clamp(_dragOffset.dy, minY, maxY);
 
