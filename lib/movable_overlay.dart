@@ -156,33 +156,48 @@ class MovableOverlayState extends State<MovableOverlay>
     final adjustedYVelocity = adjustedVelocity.dy;
 
     void updateOffset() {
+      final isFastSwipe = adjustedVelocity.distance > 800.0;
       double x = clamp(_dragOffset.dx, minX, maxX);
       double y = clamp(_dragOffset.dy, minY, maxY);
-      
-      if (adjustedXVelocity.abs() > adjustedYVelocity.abs()) {
-        final xSpring = SpringSimulation(
-          const SpringDescription(
-            mass: 1.0,
-            stiffness: 400.0, // Higher value = tighter spring
-            damping: 100.0, // Lower value = more bounce
-          ),
-          _dragOffset.dx,
-          clamp(_dragOffset.dx + adjustedXVelocity / 20, minX, maxX),
-          adjustedXVelocity,
+
+      const springDescription = SpringDescription(
+        mass: 0.5,
+        stiffness: 200.0,
+        damping: 50.0,
+      );
+
+      if (isFastSwipe) {
+        final isHorizontalSwipe = adjustedXVelocity.abs() > adjustedYVelocity.abs();
+        final currentValue = isHorizontalSwipe ? _dragOffset.dx : _dragOffset.dy;
+        final velocity = isHorizontalSwipe ? adjustedXVelocity : adjustedYVelocity;
+        final minBound = isHorizontalSwipe ? minX : minY;
+        final maxBound = isHorizontalSwipe ? maxX : maxY;
+        
+        final spring = SpringSimulation(
+          springDescription,
+          currentValue,
+          clamp(currentValue + velocity / 10, minBound, maxBound),
+          velocity,
         );
-        x = xSpring.x(_dragAnimationController.value);
+
+        if (isHorizontalSwipe) {
+          x = spring.x(_dragAnimationController.value);
+        } else {
+          y = spring.x(_dragAnimationController.value); 
+        }
       } else {
-        final ySpring = SpringSimulation(
-          const SpringDescription(
-            mass: 1,
-            stiffness: 400.0,
-            damping: 100.0,
-          ),
-          _dragOffset.dy,
-          clamp(_dragOffset.dy + adjustedYVelocity / 20, minY, maxY),
-          adjustedYVelocity,
+        final nearestCorner = _calculateNearestCorner(offset: _dragOffset, offsets: _offsets);
+        final targetOffset = _offsets[nearestCorner]!;
+        final spring = SpringSimulation(
+          springDescription,
+          0.0,
+          1.0,
+          0.0,
         );
-        y = ySpring.x(_dragAnimationController.value);
+        final progress = spring.x(_dragAnimationController.value);
+        final newOffset = Offset.lerp(_dragOffset, targetOffset, progress)!;
+        x = newOffset.dx;
+        y = newOffset.dy;
       }
 
       if (_dragOffset.dx != x || _dragOffset.dy != y) {
